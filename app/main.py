@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="publish the test post instead of leaving it as draft",
     )
+    parser.add_argument(
+        "--generate-topic",
+        action="store_true",
+        help="generate and select a blog topic (Phase 2) instead of the WP smoke test",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -72,6 +77,20 @@ def main(argv: list[str] | None = None) -> int:
             "Copy .env.example to .env and fill in your WordPress credentials."
         )
         return 2
+
+    if args.generate_topic:
+        from .topic_generator import TopicGenerator
+
+        generator = TopicGenerator(settings)
+        topic = generator.select_topic()
+        logger.info(
+            "Selected topic id=%s topic=%r category=%s status=%s",
+            topic.id,
+            topic.topic,
+            topic.category,
+            topic.status,
+        )
+        return 0
 
     client = WordPressClient(settings)
 

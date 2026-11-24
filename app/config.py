@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     request_timeout: int = 30
     max_retries: int = 3
     default_post_status: str = "draft"
+    db_path: str = "blog_automation.db"
 
     model_config = SettingsConfigDict(
         env_file=".env",
