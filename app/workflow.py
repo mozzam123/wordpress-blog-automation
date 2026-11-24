@@ -1,0 +1,183 @@
+"""Workflow orchestrator — Phase 7.
+
+Connects topic generation, research, content generation, validation,
+image generation, and WordPress publishing into one sequential workflow.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+
+from .config import Settings
+from .database import (
+    create_post_record,
+    db_session,
+    get_pending_topic,
+    get_topic,
+    update_post_record,
+    update_topic_status,
+)
+from .models import ResearchResult, Source, TopicStatus
+from .topic_generator import TopicGenerator
+from .research import ResearchService
+from .providers.search import DuckDuckGoSearchProvider
+from .content import ContentGenerator
+from .validator import SEOValidator
+from .image import ImageService
+from .wordpress import WordPressClient
+
+logger = logging.getLogger(__name__)
+
+
+class WorkflowOrchestrator:
+    """Runs the full weekly publishing cycle."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.wp_client = WordPressClient(settings)
+        self.topic_generator = TopicGenerator(settings)
+        self.search_provider = DuckDuckGoSearchProvider()
+        self.research_service = ResearchService(settings, self.search_provider)
+        self.content_generator = ContentGenerator(settings)
+        self.validator = SEOValidator()
+        self.image_service = ImageService(settings, self.wp_client)
+
+    def run_cycle(self, publish: bool = True) -> dict:
+        """Execute the full pipeline: topic → research → content → validate → image → publish."""
+        result: dict = {"topic": None, "status": "failed", "post_id": None, "error": None}
+
+        try:
+            with db_session(self.settings) as conn:
+                # Step 1: Get or select a topic
+                topic_row = get_pending_topic(conn)
+                if not topic_row:
+                    logger.info("No pending topic — generating a new one")
+                    new_topic = self.topic_generator.select_topic()
+                    topic_row = {
+                        "id": new_topic.id,
+                        "topic": new_topic.topic,
+                        "category": new_topic.category,
+                        "status": new_topic.status.value,
+                    }
+                else:
+                    topic_row = dict(topic_row)
+
+                topic_id = topic_row["id"]
+                result["topic"] = topic_row["topic"]
+                logger.info("Working on topic id=%s: %s", topic_id, topic_row["topic"])
+
+                # Step 2: Research (if not yet researched)
+                if topic_row["status"] == TopicStatus.SELECTED.value:
+                    research = self.research_service.research(topic_id)
+                    logger.info("Research complete: %d sources", len(research.sources))
+                else:
+                    research = ResearchResult(
+                        topic=topic_row["topic"],
+                        category=topic_row["category"],
+                        sources=[],
+                        key_facts=[],
+                        books=[],
+                    )
+
+                # Step 3: Generate content (if not yet generated)
+                if topic_row["status"] in (
+                    TopicStatus.SELECTED.value,
+                    TopicStatus.RESEARCHED.value,
+                ):
+                    content = self.content_generator.generate(
+                        topic_row["topic"], topic_row["category"], research
+                    )
+                    update_topic_status(conn, topic_id, TopicStatus.GENERATED)
+                    logger.info("Content generated: %s", content.title)
+                else:
+                    # Content already generated — re-generate for simplicity
+                    content = self.content_generator.generate(
+                        topic_row["topic"], topic_row["category"], research
+                    )
+                    update_topic_status(conn, topic_id, TopicStatus.GENERATED)
+                    logger.info("Content regenerated: %s", content.title)
+
+                # Step 4: Validate
+                validation = self.validator.validate(content)
+                if not validation.passed:
+                    issues = "; ".join(validation.issues)
+                    logger.error("Validation failed: %s", issues)
+                    update_topic_status(conn, topic_id, TopicStatus.FAILED)
+                    create_post_record(
+                        conn,
+                        topic_id=topic_id,
+                        title=content.title,
+                        content=content.introduction,
+                        seo_title=content.seo_title,
+                        meta_description=content.meta_description,
+                        status=TopicStatus.FAILED,
+                        error_message=issues,
+                    )
+                    result["status"] = "failed"
+                    result["error"] = issues
+                    return result
+
+                update_topic_status(conn, topic_id, TopicStatus.VALIDATED)
+                logger.info("Validation passed (score=%d)", validation.score)
+
+                # Step 5: Generate featured image
+                image_prompt = (
+                    f"Book blog featured image for: {content.title}, "
+                    f"{topic_row['category']}, literary, cozy reading atmosphere, "
+                    f"bookstore aesthetic, warm lighting"
+                )
+                featured_media_id = self.image_service.generate_and_upload(image_prompt)
+
+                # Step 6: Publish to WordPress
+                status = "publish" if publish else self.settings.default_post_status
+                wp_post = self.wp_client.create_post(
+                    title=content.title,
+                    content=self._format_html(content),
+                    status=status,
+                    excerpt=content.excerpt,
+                    featured_media=featured_media_id,
+                )
+
+                update_topic_status(conn, topic_id, TopicStatus.PUBLISHED)
+                create_post_record(
+                    conn,
+                    topic_id=topic_id,
+                    title=content.title,
+                    content=content.introduction,
+                    seo_title=content.seo_title,
+                    meta_description=content.meta_description,
+                    featured_image_id=featured_media_id,
+                    wordpress_post_id=wp_post.id,
+                    status=TopicStatus.PUBLISHED,
+                    published_at=datetime.now(timezone.utc),
+                )
+
+                result["status"] = "published"
+                result["post_id"] = wp_post.id
+                result["wp_url"] = wp_post.link
+                logger.info("Post published: id=%s url=%s", wp_post.id, wp_post.link)
+
+        except Exception as exc:
+            logger.exception("Workflow failed: %s", exc)
+            result["error"] = str(exc)
+
+        return result
+
+    def _format_html(self, content: BlogContent) -> str:
+        """Convert structured content to HTML for WordPress."""
+        from .models import BlogContent
+
+        parts = [f"<p>{content.introduction}</p>"]
+        for section in content.sections:
+            parts.append(f"<h2>{section.heading}</h2>")
+            for sub in section.subheadings:
+                parts.append(f"<h3>{sub}</h3>")
+            parts.append(f"<p>{section.content}</p>")
+        parts.append(f"<p>{content.conclusion}</p>")
+        if content.sources:
+            parts.append("<h3>Sources</h3><ul>")
+            for s in content.sources:
+                parts.append(f'<li><a href="{s}">{s}</a></li>')
+            parts.append("</ul>")
+        return "\n".join(parts)

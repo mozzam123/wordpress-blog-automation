@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     max_retries: int = 3
     default_post_status: str = "draft"
     db_path: str = "blog_automation.db"
+    groq_api_key: str | None = None
+    groq_model: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

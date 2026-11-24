@@ -67,6 +67,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="generate and select a blog topic (Phase 2) instead of the WP smoke test",
     )
+    parser.add_argument(
+        "--research",
+        type=int,
+        metavar="TOPIC_ID",
+        default=None,
+        help="research a topic by id (Phase 3)",
+    )
+    parser.add_argument(
+        "--run-cycle",
+        action="store_true",
+        help="run the full publish cycle (Phase 7): topic → research → "
+        "content → validate → image → publish",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -90,6 +103,40 @@ def main(argv: list[str] | None = None) -> int:
             topic.category,
             topic.status,
         )
+        return 0
+
+    if args.research is not None:
+        from .providers.search import DuckDuckGoSearchProvider
+        from .research import ResearchService
+
+        provider = DuckDuckGoSearchProvider()
+        service = ResearchService(settings, provider)
+        result = service.research(args.research)
+        logger.info(
+            "Researched topic=%r category=%s sources=%d",
+            result.topic,
+            result.category,
+            len(result.sources),
+        )
+        for source in result.sources:
+            logger.info("  - %s (%s)", source.title, source.url)
+        return 0
+
+    if args.run_cycle:
+        from .workflow import WorkflowOrchestrator
+
+        orchestrator = WorkflowOrchestrator(settings)
+        result = orchestrator.run_cycle(publish=args.publish)
+        logger.info(
+            "Cycle result: status=%s topic=%r post_id=%s",
+            result.get("status"),
+            result.get("topic"),
+            result.get("post_id"),
+        )
+        if result.get("wp_url"):
+            logger.info("Post URL: %s", result["wp_url"])
+        if result.get("error"):
+            logger.error("Cycle error: %s", result["error"])
         return 0
 
     client = WordPressClient(settings)
