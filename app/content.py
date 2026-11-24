@@ -123,11 +123,14 @@ def _repair_json(text: str) -> str:
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
 
+    # Quote unquoted property names: {key: or , key: → {"key": or , "key":
+    text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)', r'\1"\2"\3', text)
+
     # Remove trailing commas before closing braces/brackets
     text = re.sub(r",\s*}", "}", text)
     text = re.sub(r",\s*\]", "]", text)
 
-    # Replace single quotes with double quotes (naive but helps)
+    # Replace single quotes with double quotes
     text = text.replace("'", '"')
 
     return text
