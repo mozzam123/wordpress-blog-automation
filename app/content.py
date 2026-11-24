@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import requests
 
@@ -101,9 +102,32 @@ Write for book lovers in British English. Use the focus keyword naturally. Make 
 
         try:
             parsed = json.loads(content_text)
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to parse Groq JSON response: %s", exc)
-            logger.debug("Raw response: %s", content_text[:2000])
-            raise
+        except json.JSONDecodeError:
+            # LLM output is often imperfect JSON. Try to repair common issues.
+            repaired = _repair_json(content_text)
+            try:
+                parsed = json.loads(repaired)
+            except json.JSONDecodeError as exc:
+                logger.error("Failed to parse Groq JSON response: %s", exc)
+                logger.debug("Raw response: %s", content_text[:2000])
+                raise
 
         return BlogContent(**parsed)
+
+
+def _repair_json(text: str) -> str:
+    """Attempt to repair common LLM JSON formatting issues."""
+    # Extract the outermost JSON object if extra text surrounds it
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start : end + 1]
+
+    # Remove trailing commas before closing braces/brackets
+    text = re.sub(r",\s*}", "}", text)
+    text = re.sub(r",\s*\]", "]", text)
+
+    # Replace single quotes with double quotes (naive but helps)
+    text = text.replace("'", '"')
+
+    return text
