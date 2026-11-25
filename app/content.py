@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 import requests
 
@@ -15,6 +16,9 @@ from .config import Settings
 from .models import BlogContent, ResearchResult
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+BACKOFF_BASE = 2  # seconds; wait doubles each retry
 
 
 class ContentGenerator:
@@ -79,14 +83,30 @@ Write for book lovers in British English. Use the focus keyword naturally. Make 
             "max_tokens": 4000,
         }
 
-        try:
-            response = requests.post(
-                self.api_url, headers=headers, json=payload, timeout=90
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            logger.error("Groq API request failed: %s", exc)
-            raise
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = requests.post(
+                    self.api_url, headers=headers, json=payload, timeout=90
+                )
+                response.raise_for_status()
+                break
+            except requests.RequestException as exc:
+                if (
+                    attempt < MAX_RETRIES
+                    and getattr(exc, "response", None) is not None
+                    and exc.response.status_code in (429, 500, 502, 503, 504)
+                ):
+                    wait = BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "Groq API returned %s, retrying in %ds (attempt %d/%d)",
+                        exc.response.status_code,
+                        wait,
+                        attempt,
+                        MAX_RETRIES,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
 
         data = response.json()
         content_text = data["choices"][0]["message"]["content"].strip()
@@ -112,7 +132,29 @@ Write for book lovers in British English. Use the focus keyword naturally. Make 
                 logger.debug("Raw response: %s", content_text[:2000])
                 raise
 
+        parsed = _ensure_fields(parsed, topic, category)
         return BlogContent(**parsed)
+
+
+def _make_slug(title: str) -> str:
+    """Convert a title to a URL-friendly slug."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug or "untitled"
+
+
+def _ensure_fields(parsed: dict, topic: str, category: str) -> dict:
+    """Fill in missing required fields with sensible defaults so the
+    pipeline doesn't fail when Groq omits a key from its JSON response."""
+    parsed.setdefault("title", topic)
+    title = parsed["title"]
+    parsed.setdefault("seo_title", title[:60])
+    parsed.setdefault("slug", _make_slug(title))
+    parsed.setdefault("meta_description", parsed.get("excerpt") or title[:160])
+    parsed.setdefault("focus_keyword", (parsed.get("categories") or [category])[0] or category)
+    parsed.setdefault("introduction", parsed.get("excerpt") or title)
+    parsed.setdefault("sections", [])
+    parsed.setdefault("conclusion", parsed.get("excerpt") or title)
+    return parsed
 
 
 def _repair_json(text: str) -> str:
@@ -123,8 +165,9 @@ def _repair_json(text: str) -> str:
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
 
-    # Quote unquoted property names: {key: or , key: → {"key": or , "key":
-    text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)', r'\1"\2"\3', text)
+    # Quote unquoted property names after {, , }, or ]
+    text = re.sub(r'([{,}]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)', r'\1"\2"\3', text)
+    text = re.sub(r'(\]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)', r'\1"\2"\3', text)
 
     # Remove trailing commas before closing braces/brackets
     text = re.sub(r",\s*}", "}", text)

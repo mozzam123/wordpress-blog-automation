@@ -123,9 +123,9 @@ class WorkflowOrchestrator:
 
                 # Step 5: Generate featured image
                 image_prompt = (
-                    f"Book blog featured image for: {content.title}, "
-                    f"{topic_row['category']}, literary, cozy reading atmosphere, "
-                    f"bookstore aesthetic, warm lighting"
+                    f"Simple, clean, fresh book blog featured image for: {content.title}, "
+                    f"an open book with fresh green leaves, bright natural daylight, "
+                    f"minimal white background, bright and inviting, book lover aesthetic"
                 )
                 featured_media_id = self.image_service.generate_and_upload(image_prompt)
 
@@ -175,9 +175,4 @@ class WorkflowOrchestrator:
                 parts.append(f"<h3>{sub}</h3>")
             parts.append(f"<p>{section.content}</p>")
         parts.append(f"<p>{content.conclusion}</p>")
-        if content.sources:
-            parts.append("<h3>Sources</h3><ul>")
-            for s in content.sources:
-                parts.append(f'<li><a href="{s}">{s}</a></li>')
-            parts.append("</ul>")
         return "\n".join(parts)
