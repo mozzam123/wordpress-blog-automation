@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
+from urllib.parse import unquote, urlparse, parse_qs
 
 import requests
 
@@ -57,18 +58,18 @@ class DuckDuckGoSearchProvider(BaseSearchProvider):
         )
         for block in blocks[:limit]:
             title_match = re.search(
-                r'<a class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+                r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
                 block,
                 re.DOTALL,
             )
             if not title_match:
                 continue
-            url = title_match.group(1)
+            url = self._decode_ddg_url(title_match.group(1))
             title = re.sub(r"<[^>]+>", "", title_match.group(2)).strip()
             snippet_match = re.search(
-                r'<a class="result__snippet"[^>]*>(.*?)</a>', block, re.DOTALL
+                r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', block, re.DOTALL
             ) or re.search(
-                r'<div class="result__snippet"[^>]*>(.*?)</div>', block, re.DOTALL
+                r'<div[^>]*class="result__snippet"[^>]*>(.*?)</div>', block, re.DOTALL
             )
             snippet = (
                 re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip()
@@ -77,3 +78,13 @@ class DuckDuckGoSearchProvider(BaseSearchProvider):
             )
             sources.append(Source(title=title, url=url, snippet=snippet))
         return sources
+
+    @staticmethod
+    def _decode_ddg_url(url: str) -> str:
+        """Decode a DuckDuckGo redirect URL to the real destination."""
+        parsed = urlparse(url)
+        if "duckduckgo.com" in parsed.netloc and parsed.path == "/l/":
+            qs = parse_qs(parsed.query)
+            if "uddg" in qs:
+                return unquote(qs["uddg"][0])
+        return url

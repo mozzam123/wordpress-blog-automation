@@ -247,6 +247,11 @@ class WordPressClient:
         response = self._request("POST", "posts", json=payload)
         return PostResponse.model_validate(response)
 
+    def update_post(self, post_id: int, **fields) -> PostResponse:
+        """Update an existing post's fields (e.g. featured_media)."""
+        response = self._request("POST", f"posts/{post_id}", json=fields)
+        return PostResponse.model_validate(response)
+
     def get_post(self, post_id: int) -> PostResponse:
         """Return a single post by id."""
         response = self._request("GET", f"posts/{post_id}")
