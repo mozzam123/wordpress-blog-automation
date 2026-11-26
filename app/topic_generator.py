@@ -100,9 +100,14 @@ class TopicGenerator:
         return candidates
 
     def _is_duplicate(self, conn, topic: str) -> bool:
-        """Return True if the topic already exists in the database."""
+        """Return True if the topic has already been published.
+
+        Topics that were researched or failed but never published stay
+        eligible for re-selection, so the finite topic pool can't deadlock.
+        """
         row = conn.execute(
-            "SELECT 1 FROM blog_topics WHERE topic = ?", (topic,)
+            "SELECT 1 FROM blog_topics WHERE topic = ? AND status = ?",
+            (topic, TopicStatus.PUBLISHED.value),
         ).fetchone()
         return row is not None
 

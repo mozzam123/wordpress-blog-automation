@@ -51,14 +51,26 @@ Source URLs:
 {sources_text if sources_text else "No sources provided."}
 
 Return ONLY a valid JSON object with these exact keys:
-- title: compelling blog post title
+- title: compelling blog post title, include the main keyword and a hook, under 60 characters
 - seo_title: SEO title under 60 characters
 - slug: URL-friendly slug (lowercase, hyphens)
 - meta_description: under 160 characters
 - focus_keyword: primary SEO keyword
-- introduction: 2-3 engaging paragraphs
-- sections: array of objects with heading, subheadings[], content
-- conclusion: concluding paragraph
+- introduction: 80-120 words, state the keyword in the first 100 words, say what the reader will get, hint at the payoff, do not open with fluff like "Books are wonderful."
+- quick_pick: array of 3-5 short strings for a "top picks at a glance" summary near the top
+- sections: array of objects, one per book or section, each with:
+  - heading: H2 like "1. Title by Author"
+  - hook: 2-3 sentence hook with no spoilers
+  - perfect_for: "Perfect for readers who like..." phrasing (catches long-tail searches)
+  - genre: genre name
+  - page_count: number of pages as a string
+  - product_link: URL to the product page on your store
+  - cover_image: URL to a book cover image (empty string if none)
+  - subheadings: array of H3 sub-section headings (only when needed)
+  - content: main body text for this section
+- faq: array of 3-5 objects, each with "question" and "answer" (40-60 words each)
+- conclusion: short recap paragraph
+- cta_link: URL to the relevant collection page
 - categories: array of category names (include "{category}")
 - tags: array of relevant tags
 - excerpt: short excerpt under 55 words
@@ -152,8 +164,22 @@ def _ensure_fields(parsed: dict, topic: str, category: str) -> dict:
     parsed.setdefault("meta_description", parsed.get("excerpt") or title[:160])
     parsed.setdefault("focus_keyword", (parsed.get("categories") or [category])[0] or category)
     parsed.setdefault("introduction", parsed.get("excerpt") or title)
+    parsed.setdefault("quick_pick", [])
     parsed.setdefault("sections", [])
+    for sec in parsed["sections"]:
+        sec.setdefault("author", None)
+        sec.setdefault("genre", None)
+        sec.setdefault("page_count", None)
+        sec.setdefault("product_link", None)
+        sec.setdefault("cover_image", None)
+        sec.setdefault("hook", None)
+        sec.setdefault("perfect_for", None)
+    parsed.setdefault("faq", [])
+    for item in parsed["faq"]:
+        item.setdefault("question", "")
+        item.setdefault("answer", "")
     parsed.setdefault("conclusion", parsed.get("excerpt") or title)
+    parsed.setdefault("cta_link", "")
     return parsed
 
 

@@ -45,10 +45,23 @@ class ResearchResult(BaseModel):
     books: list[dict[str, str]] = []
 
 
+class FaqItem(BaseModel):
+    question: str
+    answer: str
+
+
 class Section(BaseModel):
     heading: str
     subheadings: list[str] = []
     content: str
+    # Per-book fields (optional; used when the section is a book entry)
+    author: str | None = None
+    genre: str | None = None
+    page_count: str | None = None
+    product_link: str | None = None
+    cover_image: str | None = None
+    hook: str | None = None
+    perfect_for: str | None = None
 
 
 class BlogContent(BaseModel):
@@ -58,8 +71,11 @@ class BlogContent(BaseModel):
     meta_description: str
     focus_keyword: str
     introduction: str
+    quick_pick: list[str] = []
     sections: list[Section]
+    faq: list[FaqItem] = []
     conclusion: str
+    cta_link: str = ""
     categories: list[str] = []
     tags: list[str] = []
     excerpt: str = ""

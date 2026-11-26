@@ -18,7 +18,7 @@ from .database import (
     update_post_record,
     update_topic_status,
 )
-from .models import ResearchResult, Source, TopicStatus
+from .models import BlogContent, ResearchResult, Source, TopicStatus
 from .topic_generator import TopicGenerator
 from .research import ResearchService
 from .providers.search import DuckDuckGoSearchProvider
@@ -130,6 +130,20 @@ class WorkflowOrchestrator:
                 featured_media_id = self.image_service.generate_and_upload(image_prompt)
 
                 # Step 6: Publish to WordPress
+                # Resolve category names to WordPress category IDs so posts are
+                # filed under the right category instead of defaulting to
+                # "Uncategorized". Always include the "blog" category if it exists.
+                wp_categories = self.wp_client.get_categories()
+                name_to_id = {cat.name.lower(): cat.id for cat in wp_categories}
+                category_ids = [
+                    name_to_id[name.lower()]
+                    for name in content.categories
+                    if name.lower() in name_to_id
+                ]
+                blog_id = name_to_id.get("blog")
+                if blog_id is not None and blog_id not in category_ids:
+                    category_ids.append(blog_id)
+
                 status = "publish" if publish else self.settings.default_post_status
                 wp_post = self.wp_client.create_post(
                     title=content.title,
@@ -137,6 +151,7 @@ class WorkflowOrchestrator:
                     status=status,
                     excerpt=content.excerpt,
                     featured_media=featured_media_id,
+                    categories=category_ids,
                 )
 
                 update_topic_status(conn, topic_id, TopicStatus.PUBLISHED)
@@ -165,14 +180,71 @@ class WorkflowOrchestrator:
         return result
 
     def _format_html(self, content: BlogContent) -> str:
-        """Convert structured content to HTML for WordPress."""
-        from .models import BlogContent
+        """Convert structured content to HTML for WordPress.
 
-        parts = [f"<p>{content.introduction}</p>"]
+        Structure:
+          H1 title
+          intro paragraph
+          optional quick-pick list
+          per-book H2 sections (hook, "Perfect for...", genre/pages/store link,
+          cover image, body, optional H3 sub-sections)
+          FAQ block (Q&A pairs)
+          conclusion + CTA link
+        """
+        parts = [f"<h1>{content.title}</h1>"]
+        parts.append(f"<p>{content.introduction}</p>")
+
+        if content.quick_pick:
+            parts.append("<h2>Quick Pick</h2>")
+            parts.append("<ul>")
+            for item in content.quick_pick:
+                parts.append(f"<li>{item}</li>")
+            parts.append("</ul>")
+
         for section in content.sections:
             parts.append(f"<h2>{section.heading}</h2>")
+            if section.hook:
+                parts.append(f"<p>{section.hook}</p>")
+            if section.perfect_for:
+                parts.append(
+                    f"<p><strong>Perfect for readers who like...</strong> "
+                    f"{section.perfect_for}</p>"
+                )
+            meta_bits = []
+            if section.genre:
+                meta_bits.append(f"<strong>Genre:</strong> {section.genre}")
+            if section.page_count:
+                meta_bits.append(f"<strong>Pages:</strong> {section.page_count}")
+            if section.product_link:
+                meta_bits.append(
+                    f'<strong>Store:</strong> <a href="{section.product_link}">'
+                    f"Buy on our store</a>"
+                )
+            if meta_bits:
+                parts.append(f"<p>{' | '.join(meta_bits)}</p>")
+            if section.cover_image:
+                parts.append(
+                    f'<img src="{section.cover_image}" '
+                    f'alt="{section.heading} cover" '
+                    f'style="max-width:100%;height:auto;display:block;margin:1em 0;">'
+                )
+            if section.content:
+                parts.append(f"<p>{section.content}</p>")
             for sub in section.subheadings:
                 parts.append(f"<h3>{sub}</h3>")
-            parts.append(f"<p>{section.content}</p>")
+
+        if content.faq:
+            parts.append("<h2>FAQ</h2>")
+            for item in content.faq:
+                parts.append(f"<h3>{item.question}</h3>")
+                parts.append(f"<p>{item.answer}</p>")
+
+        parts.append(f"<h2>Conclusion</h2>")
         parts.append(f"<p>{content.conclusion}</p>")
+        if content.cta_link:
+            collection = content.categories[0] if content.categories else "collection"
+            parts.append(
+                f'<p><a href="{content.cta_link}">Browse all {collection}</a></p>'
+            )
+
         return "\n".join(parts)
